@@ -1,5 +1,7 @@
+import openpyxl
 import httpx
 from selectolax.parser import HTMLParser
+import time
 
 
 def get_html(baseurl, page):
@@ -45,14 +47,31 @@ def parse_page(html):
         }
         yield item
 
+
+# Export data to Excel
+def export_to_xlsx(products_list):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+
+    # Write headers
+    headers = products_list[0].keys() if products_list else []
+    ws.append(list(headers))
+
+    # Write data
+    for product in products_list:
+        ws.append(list(product.values()))
+
+    # Save to Excel file
+    wb.save('products.xlsx')
+    print('Data saved to products.xlsx')
+
+
 # Main function
-
-
 def main():
     baseurl = "https://www.rei.com/c/watersports?page="
     products_list = []
-    for i in range(1, 80):
-        print('Page '+str(i))
+    for i in range(1, 5):
+        print(f"Page {i}")
         html = get_html(baseurl, i)
         # If we exceeded the page:
         if html is False:
@@ -62,8 +81,13 @@ def main():
         # Iterate over the items generated
         for item in data:
             products_list.append(item)
+        # Wait a second before scraping next page
+        time.sleep(1)
 
-    print('Total products: '+str(len(products_list)))
+    # Export to Excel
+    export_to_xlsx(products_list)
+
+    print(f'Total products: {len(products_list)}')
     print(products_list)
 
 
