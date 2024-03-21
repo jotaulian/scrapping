@@ -1,15 +1,31 @@
-import openpyxl
 import httpx
 from selectolax.parser import HTMLParser
 import time
+from urllib.parse import urljoin
+from dataclasses import dataclass, asdict, fields
+from typing import Optional
+import json
+import csv
 
 
-def get_html(baseurl, page):
+@dataclass
+class Item:
+    name: Optional[str] = None
+    item_number: Optional[str] = None
+    price: Optional[str] = None
+    rating: Optional[float] = None
+
+
+def get_html(url, **kwargs):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
+    if kwargs.get("page"):
+        resp = httpx.get(url+str(kwargs.get("page")),
+                         headers=headers, follow_redirects=True)
+    else:
+        resp = httpx.get(url, headers=headers, follow_redirects=True)
 
-    resp = httpx.get(baseurl+str(page), headers=headers, follow_redirects=True)
     # If we are trying to access an inexistent page --> return False
     try:
         resp.raise_for_status()
@@ -26,69 +42,81 @@ def get_html(baseurl, page):
 # This function is necessary for the cases when there is no selector found
 def extract_text(html, selector):
     try:
-        return html.css_first(selector).text()
+        text = html.css_first(selector).text()
+        return clean_data(text)
     except AttributeError:
         return None
 
 
+def export_to_json(products):
+    with open("products.json", "w", encoding="utf-8") as f:
+        json.dump(products, f, ensure_ascii=False, indent=4)
+    print("Saved to json")
+
+
+def export_to_csv(products):
+    field_names = [field.name for field in fields(Item)]
+    with open("products.csv", "w") as f:
+        writer = csv.DictWriter(f, field_names)
+        writer.writeheader()
+        writer.writerows(products)
+    print("Saved to csv")
+
+
+def append_to_csv(products):
+    field_names = [field.name for field in fields(Item)]
+    with open("products.csv", "a") as f:
+        writer = csv.DictWriter(f, field_names)
+        writer.writerow(products)
+    print("Item appended to csv")
+
+
+def clean_data(value):
+    chars_to_remove = ["$", "Item", "#"]
+    for char in chars_to_remove:
+        if char in value:
+            value = value.replace(char, "")
+    return value.strip()
+
+
 # Select all product and iterate over them:
-def parse_page(html):
+def parse_page(html: HTMLParser):
     products = html.css("li.VcGDfKKy_dvNbxUqm29K")
 
     for product in products:
-        savings_text = extract_text(
-            product, "div[data-ui=savings-percent-variant2]")
-        savings = savings_text.split()[1] if savings_text is not None else None
-        item = {
-            "name": extract_text(product, ".Xpx0MUGhB7jSm5UvK2EY"),
-            "fullprice": extract_text(product, "span[data-ui=full-price]"),
-            "saleprice": extract_text(product, "span[data-ui=sale-price]"),
-            "savings": savings,
-        }
-        yield item
+        yield urljoin("https://www.rei.com/", product.css_first("a").attributes["href"])
 
 
-# Export data to Excel
-def export_to_xlsx(products_list):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-
-    # Write headers
-    headers = products_list[0].keys() if products_list else []
-    ws.append(list(headers))
-
-    # Write data
-    for product in products_list:
-        ws.append(list(product.values()))
-
-    # Save to Excel file
-    wb.save('products.xlsx')
-    print('Data saved to products.xlsx')
+def parse_item_page(html: HTMLParser):
+    new_item = Item(
+        name=extract_text(html, "h1#product-page-title"),
+        item_number=extract_text(html, "span#product-item-number"),
+        price=extract_text(html, "span#buy-box-product-price"),
+        rating=extract_text(html, "span.cdr-rating__number_15-0-0"),
+    )
+    return asdict(new_item)
 
 
 # Main function
 def main():
     baseurl = "https://www.rei.com/c/watersports?page="
     products_list = []
-    for i in range(1, 5):
+    for i in range(1, 2):
         print(f"Page {i}")
-        html = get_html(baseurl, i)
-        # If we exceeded the page:
+        html = get_html(baseurl, page=i)
         if html is False:
             break
-        # Retrieve the yielded items
-        data = parse_page(html)
-        # Iterate over the items generated
-        for item in data:
-            products_list.append(item)
-        # Wait a second before scraping next page
-        time.sleep(1)
+        products_urls = parse_page(html)
+        # Iterate over the urls generated
+        for url in products_urls:
+            print(url)
+            html = get_html(url)
+            products_list.append(parse_item_page(html))
+            # append_to_csv(parse_item_page(html))
+            time.sleep(0.2)
 
-    # Export to Excel
-    export_to_xlsx(products_list)
-
-    print(f'Total products: {len(products_list)}')
-    print(products_list)
+    export_to_json(products_list)
+    # export_to_csv(products_list)
 
 
 if __name__ == "__main__":
